@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>할 일 관리</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #f4f5f7;
+    color: #1f2937;
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  }
+  .app {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+  }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+
+  .notice {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #fef3c7;
+    color: #78350f;
+    font-size: 14px;
+  }
+  .notice[hidden] { display: none; }
+
+  .add-form { display: flex; gap: 8px; margin-bottom: 16px; }
+  .add-form input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 15px;
+    background: #fff;
+  }
+  .add-form select {
+    padding: 10px 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 15px;
+    background: #fff;
+  }
+  .add-form button {
+    padding: 10px 16px;
+    border: 0;
+    border-radius: 8px;
+    background: #2563eb;
+    color: #fff;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .add-form button:hover { background: #1d4ed8; }
+  :focus-visible { outline: 3px solid #93c5fd; outline-offset: 1px; }
+
+  .todo-list { list-style: none; margin: 0; padding: 0; background: #fff; border-radius: 10px; }
+  .todo-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .todo-list li:last-child { border-bottom: 0; }
+  .todo-text { overflow-wrap: anywhere; }
+
+  .badge {
+    flex: none;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .badge.work     { background: #dbeafe; color: #1e40af; }
+  .badge.personal { background: #dcfce7; color: #166534; }
+  .badge.study    { background: #ede9fe; color: #5b21b6; }
+
+  .empty { padding: 28px 14px; text-align: center; color: #6b7280; }
+</style>
+</head>
+<body>
+<main class="app">
+  <h1>할 일 관리</h1>
+
+  <p id="notice" class="notice" role="alert" hidden></p>
+
+  <form id="add-form" class="add-form">
+    <input id="todo-input" type="text" placeholder="할 일을 입력하세요" maxlength="200"
+           autocomplete="off" aria-label="할 일 입력">
+    <select id="category-select" aria-label="카테고리">
+      <option value="work">업무</option>
+      <option value="personal">개인</option>
+      <option value="study">공부</option>
+    </select>
+    <button type="submit">추가</button>
+  </form>
+
+  <ul id="todo-list" class="todo-list" aria-label="할 일 목록"></ul>
+</main>
+
+<script>
+  // 저장 키와 상수
+  const STORAGE_KEY = 'todo-app-v1';
+  const LAST_CATEGORY_KEY = 'todo-app-v1-last-category';
+  const CATEGORIES = { work: '업무', personal: '개인', study: '공부' };
+  const MAX_LENGTH = 200;
+
+  const form = document.getElementById('add-form');
+  const input = document.getElementById('todo-input');
+  const select = document.getElementById('category-select');
+  const listEl = document.getElementById('todo-list');
+  const noticeEl = document.getElementById('notice');
+
+  let todos = [];
+
+  function showNotice(message) {
+    noticeEl.textContent = message;
+    noticeEl.hidden = false;
+  }
+
+  // 저장된 항목이 올바른 모양인지 확인
+  function isValidTodo(t) {
+    return t !== null && typeof t === 'object'
+      && typeof t.id === 'string'
+      && typeof t.text === 'string'
+      && Object.prototype.hasOwnProperty.call(CATEGORIES, t.category)
+      && typeof t.done === 'boolean'
+      && typeof t.createdAt === 'number';
+  }
+
+  // 불러오기: 실패해도 앱은 빈 목록으로 시작한다
+  function loadTodos() {
+    let raw;
+    try {
+      raw = localStorage.getItem(STORAGE_KEY);
+    } catch (e) {
+      showNotice('저장된 데이터를 불러오지 못했습니다');
+      return [];
+    }
+    if (raw === null) return [];
+    try {
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data)) throw new Error('목록 형식이 아님');
+      return data.filter(isValidTodo);
+    } catch (e) {
+      try { localStorage.setItem(STORAGE_KEY + '-broken', raw); } catch (_) { /* 백업 실패는 무시 */ }
+      showNotice('저장된 데이터를 불러오지 못했습니다');
+      return [];
+    }
+  }
+
+  function saveTodos() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+    } catch (e) {
+      showNotice('저장하지 못했습니다. 새로고침하면 방금 한 변경이 사라질 수 있습니다');
+    }
+  }
+
+  // 화면 그리기: 사용자 입력은 textContent로만 넣는다
+  function render() {
+    listEl.replaceChildren();
+    if (todos.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = '할 일을 추가하세요';
+      listEl.appendChild(empty);
+      return;
+    }
+    for (const todo of todos) {
+      const li = document.createElement('li');
+      li.dataset.id = todo.id;
+
+      const text = document.createElement('span');
+      text.className = 'todo-text';
+      text.textContent = todo.text;
+
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + todo.category;
+      badge.textContent = CATEGORIES[todo.category];
+
+      li.append(text, badge);
+      listEl.appendChild(li);
+    }
+  }
+
+  // 추가: 성공하면 true
+  function addTodo(rawText, category) {
+    const text = rawText.trim().slice(0, MAX_LENGTH);
+    if (text === '') return false;
+    if (!Object.prototype.hasOwnProperty.call(CATEGORIES, category)) return false;
+    todos.unshift({
+      id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      text,
+      category,
+      done: false,
+      createdAt: Date.now(),
+    });
+    saveTodos();
+    render();
+    return true;
+  }
+
+  // 마지막에 고른 카테고리를 기억한다
+  function loadLastCategory() {
+    try {
+      const saved = localStorage.getItem(LAST_CATEGORY_KEY);
+      if (saved && Object.prototype.hasOwnProperty.call(CATEGORIES, saved)) select.value = saved;
+    } catch (e) { /* 기본값 유지 */ }
+  }
+
+  function saveLastCategory() {
+    try { localStorage.setItem(LAST_CATEGORY_KEY, select.value); } catch (e) { /* 무시 */ }
+  }
+
+  // Enter와 추가 버튼은 form 제출 하나로 처리한다 (한글 입력 중 Enter 중복 방지)
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (addTodo(input.value, select.value)) {
+      saveLastCategory();
+      input.value = '';
+    }
+    input.focus();
+  });
+
+  todos = loadTodos();
+  loadLastCategory();
+  render();
+</script>
+</body>
+</html>
